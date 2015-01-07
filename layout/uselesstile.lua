@@ -1,15 +1,16 @@
 
 --[[
-                                                  
-     Licensed under GNU General Public License v2 
-      * (c) 2014, projektile, worron              
-      * (c) 2013, Luke Bonham                     
-      * (c) 2009, Donald Ephraim Curtis           
-      * (c) 2008, Julien Danjolu                  
-                                                  
+
+     Licensed under GNU General Public License v2
+      * (c) 2014, projektile, worron
+      * (c) 2013, Luke Bonham
+      * (c) 2009, Donald Ephraim Curtis
+      * (c) 2008, Julien Danjolu
+
 --]]
 
 local tag       = require("awful.tag")
+local client    = require("awful.client")
 local beautiful = require("beautiful")
 local ipairs    = ipairs
 local math      = { floor = math.floor,
@@ -17,6 +18,12 @@ local math      = { floor = math.floor,
                     max   = math.max,
                     min   = math.min }
 local tonumber  = tonumber
+local capi =
+{
+    mouse = mouse,
+    screen = screen,
+    mousegrabber = mousegrabber
+}
 
 local uselesstile = {}
 
@@ -49,6 +56,102 @@ local function cut_row(wa, factor, index, used)
     local area = { x = wa.x, y = wa.y + used, width = wa.width, height = height }
 
     return area
+end
+
+local function mouse_resize_handler(c, corner, x, y, orientation)
+    local orientation = orientation or "tile"
+    local wa = capi.screen[c.screen].workarea
+    local mwfact = c.screen.selected_tag.master_width_factor
+    local cursor
+    local g = c:geometry()
+    local offset = 0
+    local x,y
+    if orientation == "tile" then
+        cursor = "cross"
+        if g.height+15 > wa.height then
+            offset = g.height * .5
+            cursor = "sb_h_double_arrow"
+        elseif not (g.y+g.height+15 > wa.y+wa.height) then
+            offset = g.height
+        end
+        capi.mouse.coords({ x = wa.x + wa.width * mwfact, y = g.y + offset })
+    elseif orientation == "left" then
+        cursor = "cross"
+        if g.height+15 >= wa.height then
+            offset = g.height * .5
+            cursor = "sb_h_double_arrow"
+        elseif not (g.y+g.height+15 > wa.y+wa.height) then
+            offset = g.height
+        end
+        capi.mouse.coords({ x = wa.x + wa.width * (1 - mwfact), y = g.y + offset })
+    elseif orientation == "bottom" then
+        cursor = "cross"
+        if g.width+15 >= wa.width then
+            offset = g.width * .5
+            cursor = "sb_v_double_arrow"
+        elseif not (g.x+g.width+15 > wa.x+wa.width) then
+            offset = g.width
+        end
+        capi.mouse.coords({ y = wa.y + wa.height * mwfact, x = g.x + offset})
+    else
+        cursor = "cross"
+        if g.width+15 >= wa.width then
+            offset = g.width * .5
+            cursor = "sb_v_double_arrow"
+        elseif not (g.x+g.width+15 > wa.x+wa.width) then
+            offset = g.width
+        end
+        capi.mouse.coords({ y = wa.y + wa.height * (1 - mwfact), x= g.x + offset })
+    end
+
+    capi.mousegrabber.run(function (_mouse)
+                              for k, v in ipairs(_mouse.buttons) do
+                                  if v then
+                                      local fact_x = (_mouse.x - wa.x) / wa.width
+                                      local fact_y = (_mouse.y - wa.y) / wa.height
+                                      local mwfact
+
+                                      local g = c:geometry()
+
+
+                                      -- we have to make sure we're not on the last visible client where we have to use different settings.
+                                      local wfact
+                                      local wfact_x, wfact_y
+                                      if (g.y+g.height+15) > (wa.y+wa.height) then
+                                          wfact_y = (g.y + g.height - _mouse.y) / wa.height
+                                      else
+                                          wfact_y = (_mouse.y - g.y) / wa.height
+                                      end
+
+                                      if (g.x+g.width+15) > (wa.x+wa.width) then
+                                          wfact_x = (g.x + g.width - _mouse.x) / wa.width
+                                      else
+                                          wfact_x = (_mouse.x - g.x) / wa.width
+                                      end
+
+
+                                      if orientation == "tile" then
+                                          mwfact = fact_x
+                                          wfact = wfact_y
+                                      elseif orientation == "left" then
+                                          mwfact = 1 - fact_x
+                                          wfact = wfact_y
+                                      elseif orientation == "bottom" then
+                                          mwfact = fact_y
+                                          wfact = wfact_x
+                                      else
+                                          mwfact = 1 - fact_y
+                                          wfact = wfact_x
+                                      end
+
+				      c.screen.selected_tag.master_width_factor
+					      = math.min(math.max(mwfact, 0.01), 0.99)
+				      client.setwfact(math.min(math.max(wfact,0.01), 0.99), c)
+                                      return true
+                                  end
+                              end
+                              return false
+                          end, cursor)
 end
 
 -- Client geometry correction depending on useless gap and window border
@@ -110,14 +213,14 @@ local function tile(p, orientation)
     -- Aliases
     local wa = p.workarea
     local cls = p.clients
-    local t = tag.selected(p.screen)
+    local t = p.tag or capi.screen[p.screen].selected_tag
 
     -- Nothing to tile here
     if #cls == 0 then return end
 
     -- Get tag prop
-    local nmaster = math.min(tag.getnmaster(t), #cls)
-    local mwfact = tag.getmwfact(t)
+    local nmaster = math.min(t.master_count, #cls)
+    local mwfact = t.master_width_factor
 
     if nmaster == 0 then
         mwfact = 0
@@ -179,7 +282,7 @@ local function tile(p, orientation)
     }
 
     -- get column number for other windows
-    local ncol = math.min(tag.getncol(t), #cls_other)
+    local ncol = math.min(t.column_count, #cls_other)
 
     if ncol == 0 then ncol = 1 end
 
@@ -224,8 +327,26 @@ uselesstile.left   = construct_layout("uselesstileleft", "left")
 uselesstile.bottom = construct_layout("uselesstilebottom", "bottom")
 uselesstile.top    = construct_layout("uselesstiletop", "top")
 
+function uselesstile.right.mouse_resize_handler(c, corner, x, y)
+    return mouse_resize_handler(c, corner, x, y)
+end
+
+function uselesstile.left.mouse_resize_handler(c, corner, x, y)
+    return mouse_resize_handler(c, corner, x, y, "left")
+end
+
+function uselesstile.top.mouse_resize_handler(c, corner, x, y)
+    return mouse_resize_handler(c, corner, x, y, "top")
+end
+
+function uselesstile.bottom.mouse_resize_handler(c, corner, x, y)
+    return mouse_resize_handler(c, corner, x, y, "bottom")
+end
+
+
 -- Module aliase
 uselesstile.arrange = uselesstile.right.arrange
+uselesstile.mouse_resize_handler = uselesstile.right.mouse_resize_handler
 uselesstile.name = uselesstile.right.name
 
 return uselesstile
